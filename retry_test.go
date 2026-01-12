@@ -66,29 +66,38 @@ func (m *MockLogger) ErrorCallCount() int {
 // TestDo_SuccessFirstAttempt 测试第一次尝试就成功
 func TestDo_SuccessFirstAttempt(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
+	var capturedAttempt int
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempt = attempt
 		return nil
 	})
 
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	if attempts != 1 {
-		t.Errorf("expected 1 attempt, got %d", attempts)
+	if capturedAttempt != 1 {
+		t.Errorf("expected 1 attempt, got %d", capturedAttempt)
 	}
 }
 
 // TestDo_RetryUntilSuccess 测试重试直到成功
 func TestDo_RetryUntilSuccess(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
+	var capturedAttempts []int
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
-		if attempts < 3 {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
+
+		if attempt < 3 {
 			return errors.New("temporary error")
 		}
 		return nil
@@ -97,19 +106,26 @@ func TestDo_RetryUntilSuccess(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	if attempts != 3 {
-		t.Errorf("expected 3 attempts, got %d", attempts)
+	if len(capturedAttempts) != 3 {
+		t.Errorf("expected 3 attempts, got %d", len(capturedAttempts))
+	}
+	if capturedAttempts[len(capturedAttempts)-1] != 3 {
+		t.Errorf("expected last attempt to be 3, got %d", capturedAttempts[len(capturedAttempts)-1])
 	}
 }
 
 // TestDo_MaxRetriesExceeded 测试超过最大重试次数
 func TestDo_MaxRetriesExceeded(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
+	var capturedAttempts []int
 	expectedErr := errors.New("persistent error")
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
 		return expectedErr
 	}, WithMaxRetries(3))
 
@@ -119,15 +135,15 @@ func TestDo_MaxRetriesExceeded(t *testing.T) {
 	if err != expectedErr {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
-	if attempts != 3 {
-		t.Errorf("expected 3 attempts, got %d", attempts)
+	if len(capturedAttempts) != 3 {
+		t.Errorf("expected 3 attempts, got %d", len(capturedAttempts))
 	}
 }
 
 // TestDo_ContextCanceled 测试上下文取消
 func TestDo_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	attempts := 0
+	var capturedAttempts []int
 
 	// 启动一个goroutine在稍后取消上下文
 	go func() {
@@ -136,7 +152,11 @@ func TestDo_ContextCanceled(t *testing.T) {
 	}()
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
 		// 模拟长时间运行
 		time.Sleep(100 * time.Millisecond)
 		return errors.New("temporary error")
@@ -148,21 +168,25 @@ func TestDo_ContextCanceled(t *testing.T) {
 	if err != context.Canceled {
 		t.Errorf("expected error %v, got %v", context.Canceled, err)
 	}
-	if attempts < 1 {
-		t.Errorf("expected at least 1 attempt, got %d", attempts)
+	if len(capturedAttempts) < 1 {
+		t.Errorf("expected at least 1 attempt, got %d", len(capturedAttempts))
 	}
-	if attempts >= 5 {
-		t.Errorf("expected less than 5 attempts, got %d", attempts)
+	if len(capturedAttempts) >= 5 {
+		t.Errorf("expected less than 5 attempts, got %d", len(capturedAttempts))
 	}
 }
 
 // TestDo_MaxElapsedTimeExceeded 测试超过最大耗时
 func TestDo_MaxElapsedTimeExceeded(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
+	var capturedAttempts []int
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
 		time.Sleep(30 * time.Millisecond)
 		return errors.New("temporary error")
 	}, WithMaxRetries(5), WithMaxElapsedTime(100*time.Millisecond), WithInterval(10*time.Millisecond))
@@ -170,24 +194,29 @@ func TestDo_MaxElapsedTimeExceeded(t *testing.T) {
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
-	if attempts < 3 {
-		t.Errorf("expected at least 3 attempts, got %d", attempts)
+	if len(capturedAttempts) < 3 {
+		t.Errorf("expected at least 3 attempts, got %d", len(capturedAttempts))
 	}
-	if attempts >= 5 {
-		t.Errorf("expected less than 5 attempts, got %d", attempts)
+	if len(capturedAttempts) >= 5 {
+		t.Errorf("expected less than 5 attempts, got %d", len(capturedAttempts))
 	}
 }
 
 // TestDo_RetryIfCondition 测试重试条件
 func TestDo_RetryIfCondition(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
+	var capturedAttempts []int
 	shouldRetryErr := errors.New("should retry")
 	shouldNotRetryErr := errors.New("should not retry")
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
-		if attempts == 1 {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
+
+		if attempt == 1 {
 			return shouldRetryErr
 		}
 		return shouldNotRetryErr
@@ -201,15 +230,14 @@ func TestDo_RetryIfCondition(t *testing.T) {
 	if err != shouldNotRetryErr {
 		t.Errorf("expected error %v, got %v", shouldNotRetryErr, err)
 	}
-	if attempts != 2 {
-		t.Errorf("expected 2 attempts, got %d", attempts)
+	if len(capturedAttempts) != 2 {
+		t.Errorf("expected 2 attempts, got %d", len(capturedAttempts))
 	}
 }
 
 // TestDo_BackoffStrategy 测试退避策略
 func TestDo_BackoffStrategy(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
 	var backoffTimes []time.Duration
 	var backoffStart time.Time
 
@@ -219,14 +247,18 @@ func TestDo_BackoffStrategy(t *testing.T) {
 	}
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+
 		// 记录退避结束时间（除了第一次尝试）
-		if attempts > 1 {
+		if attempt > 1 {
 			backoffEnd := time.Now()
 			backoffTimes = append(backoffTimes, backoffEnd.Sub(backoffStart))
 		}
 
-		if attempts < 4 {
+		if attempt < 4 {
 			return errors.New("temporary error")
 		}
 		return nil
@@ -237,9 +269,6 @@ func TestDo_BackoffStrategy(t *testing.T) {
 
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
-	}
-	if attempts != 4 {
-		t.Errorf("expected 4 attempts, got %d", attempts)
 	}
 	if len(backoffTimes) != 3 {
 		t.Errorf("expected 3 backoff times, got %d", len(backoffTimes))
@@ -262,17 +291,22 @@ func TestDo_BackoffStrategy(t *testing.T) {
 // TestDo_OnRetryCallback 测试重试回调
 func TestDo_OnRetryCallback(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
 	var retryCallbacks []struct {
 		attempt int
 		err     error
 	}
+	var lastAttempt int
 
 	expectedErr := errors.New("temporary error")
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
-		if attempts < 3 {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		lastAttempt = attempt
+
+		if attempt < 3 {
 			return expectedErr
 		}
 		return nil
@@ -286,8 +320,8 @@ func TestDo_OnRetryCallback(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	if attempts != 3 {
-		t.Errorf("expected 3 attempts, got %d", attempts)
+	if lastAttempt != 3 {
+		t.Errorf("expected last attempt to be 3, got %d", lastAttempt)
 	}
 	if len(retryCallbacks) != 2 {
 		t.Errorf("expected 2 retry callbacks, got %d", len(retryCallbacks))
@@ -311,12 +345,17 @@ func TestDo_OnRetryCallback(t *testing.T) {
 // TestDo_Logger 测试日志功能
 func TestDo_Logger(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
+	var lastAttempt int
 	mockLogger := &MockLogger{}
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
-		if attempts < 3 {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		lastAttempt = attempt
+
+		if attempt < 3 {
 			return errors.New("temporary error")
 		}
 		return nil
@@ -325,8 +364,8 @@ func TestDo_Logger(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	if attempts != 3 {
-		t.Errorf("expected 3 attempts, got %d", attempts)
+	if lastAttempt != 3 {
+		t.Errorf("expected last attempt to be 3, got %d", lastAttempt)
 	}
 	if mockLogger.InfoCallCount() != 2 {
 		t.Errorf("expected 2 info calls, got %d", mockLogger.InfoCallCount())
@@ -342,11 +381,13 @@ func TestDo_Logger(t *testing.T) {
 // TestDo_MaxElapsedTimeWithLogger 测试超过最大耗时并记录日志
 func TestDo_MaxElapsedTimeWithLogger(t *testing.T) {
 	ctx := context.Background()
-	attempts := 0
 	mockLogger := &MockLogger{}
 
 	err := Do(ctx, func(ctx context.Context) error {
-		attempts++
+		_, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
 		time.Sleep(30 * time.Millisecond)
 		return errors.New("temporary error")
 	}, WithMaxRetries(5), WithMaxElapsedTime(100*time.Millisecond), WithInterval(10*time.Millisecond), WithLogger(mockLogger))
@@ -458,5 +499,55 @@ func TestWithMaxElapsedTime_InvalidValue(t *testing.T) {
 	WithMaxElapsedTime(-1 * time.Second)(o)
 	if o.maxElapsedTime != originalMaxElapsedTime {
 		t.Errorf("expected maxElapsedTime to remain %v, got %v", originalMaxElapsedTime, o.maxElapsedTime)
+	}
+}
+
+// TestAttemptFromContext 测试从上下文中获取重试次数
+func TestAttemptFromContext(t *testing.T) {
+	ctx := context.Background()
+	var capturedAttempts []int
+
+	err := Do(ctx, func(ctx context.Context) error {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
+
+		if attempt < 3 {
+			return errors.New("temporary error")
+		}
+		return nil
+	}, WithMaxRetries(5))
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	// 验证捕获的重试次数
+	expectedAttempts := []int{1, 2, 3}
+	if len(capturedAttempts) != len(expectedAttempts) {
+		t.Errorf("expected %d attempts, got %d", len(expectedAttempts), len(capturedAttempts))
+	}
+
+	for i, expected := range expectedAttempts {
+		if capturedAttempts[i] != expected {
+			t.Errorf("expected attempt %d to be %d, got %d", i+1, expected, capturedAttempts[i])
+		}
+	}
+}
+
+// TestAttemptFromContext_NoAttempt 测试从没有设置重试次数的上下文中获取
+func TestAttemptFromContext_NoAttempt(t *testing.T) {
+	ctx := context.Background()
+
+	// 直接从普通上下文中获取，不通过Do函数
+	attempt, ok := AttemptFromContext(ctx)
+
+	if ok {
+		t.Error("expected attempt not to be available in regular context")
+	}
+	if attempt != 0 {
+		t.Errorf("expected attempt to be 0 when not available, got %d", attempt)
 	}
 }
