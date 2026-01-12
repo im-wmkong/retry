@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+type attemptKeyType struct{}
+
+var attemptKey = attemptKeyType{}
+
 // Do 执行带重试的函数
 func Do(
 	ctx context.Context,
@@ -34,7 +38,9 @@ func Do(
 			return lastErr
 		}
 
-		err := fn(ctx)
+		attemptCtx := context.WithValue(ctx, attemptKey, attempt)
+
+		err := fn(attemptCtx)
 		if err == nil {
 			return nil
 		}
@@ -72,4 +78,10 @@ func Do(
 	}
 
 	return lastErr
+}
+
+// AttemptFromContext 从 context 中获取当前重试次数
+func AttemptFromContext(ctx context.Context) (int, bool) {
+	attempt, ok := ctx.Value(attemptKey).(int)
+	return attempt, ok
 }
