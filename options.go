@@ -1,6 +1,9 @@
 package retry
 
-import "time"
+import (
+	"math/rand"
+	"time"
+)
 
 // Option functional option
 type Option func(*options)
@@ -63,6 +66,29 @@ func WithBackoff(fn func(attempt int) time.Duration) Option {
 			o.backoff = fn
 		}
 	}
+}
+
+// WithExponentialBackoff 提供带随机抖动的指数退避
+// base: 初始等待时间, max: 最大等待时间
+func WithExponentialBackoff(base, max time.Duration) Option {
+	return WithBackoff(func(attempt int) time.Duration {
+		// 计算 2^(attempt-1) * base
+		// 使用位移运算防止溢出，attempt 从 1 开始，所以左移 (attempt-1)
+		exp := attempt - 1
+		if exp > 31 { // 防止 int64 溢出
+			exp = 31
+		}
+
+		delay := base * time.Duration(1<<uint(exp))
+
+		if delay > max || delay <= 0 {
+			delay = max
+		}
+
+		// 加入 Jitter (Full Jitter 算法)
+		// 随机范围 [0, delay)
+		return time.Duration(rand.Int63n(int64(delay)))
+	})
 }
 
 // WithRetryIf 是否对该错误重试

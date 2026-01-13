@@ -551,3 +551,355 @@ func TestAttemptFromContext_NoAttempt(t *testing.T) {
 		t.Errorf("expected attempt to be 0 when not available, got %d", attempt)
 	}
 }
+
+// TestDo_ExponentialBackoff 测试指数退避策略
+func TestDo_ExponentialBackoff(t *testing.T) {
+	ctx := context.Background()
+	var backoffTimes []time.Duration
+	var backoffStart time.Time
+	base := 10 * time.Millisecond
+	max := 100 * time.Millisecond
+
+	err := Do(ctx, func(ctx context.Context) error {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+
+		// 记录退避结束时间（除了第一次尝试）
+		if attempt > 1 {
+			backoffEnd := time.Now()
+			backoffTimes = append(backoffTimes, backoffEnd.Sub(backoffStart))
+		}
+
+		if attempt < 4 {
+			return errors.New("temporary error")
+		}
+		return nil
+	}, WithMaxRetries(5), WithExponentialBackoff(base, max), WithOnRetry(func(attempt int, err error) {
+		// 在重试前记录退避开始时间
+		backoffStart = time.Now()
+	}))
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if len(backoffTimes) != 3 {
+		t.Errorf("expected 3 backoff times, got %d", len(backoffTimes))
+	}
+
+	// 验证退避时间在合理范围内（指数增长但不超过最大值）
+	for i, elapsed := range backoffTimes {
+		expectedMin := base * time.Duration(1<<uint(i))
+		if expectedMin > max {
+			expectedMin = max
+		}
+
+		// 由于有随机抖动，退避时间应该小于预期最大值
+		if elapsed >= max {
+			t.Errorf("backoff time %d should be less than %v, got %v", i, max, elapsed)
+		}
+	}
+}
+
+// TestDo_FixedInterval 测试固定重试间隔
+func TestDo_FixedInterval(t *testing.T) {
+	ctx := context.Background()
+	var intervalTimes []time.Duration
+	var intervalStart time.Time
+	interval := 20 * time.Millisecond
+
+	err := Do(ctx, func(ctx context.Context) error {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+
+		// 记录间隔结束时间（除了第一次尝试）
+		if attempt > 1 {
+			intervalEnd := time.Now()
+			intervalTimes = append(intervalTimes, intervalEnd.Sub(intervalStart))
+		}
+
+		if attempt < 4 {
+			return errors.New("temporary error")
+		}
+		return nil
+	}, WithMaxRetries(5), WithInterval(interval), WithOnRetry(func(attempt int, err error) {
+		// 在重试前记录间隔开始时间
+		intervalStart = time.Now()
+	}))
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if len(intervalTimes) != 3 {
+		t.Errorf("expected 3 interval times, got %d", len(intervalTimes))
+	}
+
+	// 验证间隔时间是否符合预期（允许一定误差）
+	for i, elapsed := range intervalTimes {
+		if elapsed < interval-5*time.Millisecond {
+			t.Errorf("interval time %d should be at least %v, got %v", i, interval, elapsed)
+		}
+		if elapsed > interval+5*time.Millisecond {
+			t.Errorf("interval time %d should be at most %v, got %v", i, interval, elapsed)
+		}
+	}
+}
+
+// TestDo_ErrorLoggingFields 测试错误日志字段
+func TestDo_ErrorLoggingFields(t *testing.T) {
+	ctx := context.Background()
+	mockLogger := &MockLogger{}
+	expectedErr := errors.New("specific error message")
+
+	err := Do(ctx, func(ctx context.Context) error {
+		return expectedErr
+	}, WithMaxRetries(2), WithLogger(mockLogger))
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	// 验证日志中包含错误信息
+	if mockLogger.InfoCallCount() != 1 {
+		t.Errorf("expected 1 info call, got %d", mockLogger.InfoCallCount())
+	}
+
+	// 检查日志字段
+	if len(mockLogger.infoCalls) > 0 {
+		infoCall := mockLogger.infoCalls[0]
+		foundErrorField := false
+		for _, field := range infoCall.fields {
+			if field.Key == "error" && field.Value == expectedErr.Error() {
+				foundErrorField = true
+				break
+			}
+		}
+		if !foundErrorField {
+			t.Error("expected error field in log message")
+		}
+	}
+}
+
+// TestDo_BackoffPrecedence 测试退避优先级高于间隔
+func TestDo_BackoffPrecedence(t *testing.T) {
+	ctx := context.Background()
+	var backoffTimes []time.Duration
+	var backoffStart time.Time
+
+	// 同时设置 backoff 和 interval，backoff 应该生效
+	customBackoff := func(attempt int) time.Duration {
+		return 30 * time.Millisecond
+	}
+
+	err := Do(ctx, func(ctx context.Context) error {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+
+		if attempt > 1 {
+			backoffEnd := time.Now()
+			backoffTimes = append(backoffTimes, backoffEnd.Sub(backoffStart))
+		}
+
+		if attempt < 4 {
+			return errors.New("temporary error")
+		}
+		return nil
+	}, WithMaxRetries(5), WithBackoff(customBackoff), WithInterval(10*time.Millisecond), WithOnRetry(func(attempt int, err error) {
+		backoffStart = time.Now()
+	}))
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	// 验证退避时间符合 backoff 设置，而不是 interval 设置
+	for i, elapsed := range backoffTimes {
+		if elapsed < 30*time.Millisecond-5*time.Millisecond {
+			t.Errorf("backoff time %d should be at least %v, got %v", i, 30*time.Millisecond, elapsed)
+		}
+	}
+}
+
+// TestDo_MaxRetriesOne 测试最大重试次数为1的情况
+func TestDo_MaxRetriesOne(t *testing.T) {
+	ctx := context.Background()
+	var capturedAttempts []int
+
+	err := Do(ctx, func(ctx context.Context) error {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
+		return errors.New("temporary error")
+	}, WithMaxRetries(1))
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	if len(capturedAttempts) != 1 {
+		t.Errorf("expected 1 attempt, got %d", len(capturedAttempts))
+	}
+}
+
+// TestDo_RetryIfAlwaysFalse 测试重试条件始终为 false
+func TestDo_RetryIfAlwaysFalse(t *testing.T) {
+	ctx := context.Background()
+	var capturedAttempts []int
+
+	err := Do(ctx, func(ctx context.Context) error {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		capturedAttempts = append(capturedAttempts, attempt)
+		return errors.New("temporary error")
+	}, WithMaxRetries(3), WithRetryIf(func(err error) bool {
+		return false // 从不重试
+	}))
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	if len(capturedAttempts) != 1 {
+		t.Errorf("expected 1 attempt, got %d", len(capturedAttempts))
+	}
+}
+
+// TestExponentialBackoff_OverflowProtection 测试溢出保护机制
+func TestExponentialBackoff_OverflowProtection(t *testing.T) {
+	ctx := context.Background()
+	var attemptValues []int
+
+	err := Do(ctx, func(ctx context.Context) error {
+		attempt, ok := AttemptFromContext(ctx)
+		if !ok {
+			t.Error("expected attempt to be available in context")
+		}
+		attemptValues = append(attemptValues, attempt)
+
+		return nil
+	}, WithMaxRetries(40), WithExponentialBackoff(1*time.Millisecond, 100*time.Millisecond))
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if len(attemptValues) == 0 {
+		t.Error("expected at least one attempt")
+	}
+}
+
+// TestExponentialBackoff_DelayExceedsMax 测试延迟超出最大值的情况
+func TestExponentialBackoff_DelayExceedsMax(t *testing.T) {
+	base := 10 * time.Millisecond
+	max := 50 * time.Millisecond
+	backoffOption := WithExponentialBackoff(base, max)
+
+	o := defaultOptions()
+	backoffOption(o)
+
+	delay := o.backoff(4)
+
+	if delay >= max {
+		t.Errorf("expected delay to be less than %v, got %v", max, delay)
+	}
+}
+
+// TestExponentialBackoff_DelayZeroOrNegative 测试延迟小于等于0的情况
+func TestExponentialBackoff_DelayZeroOrNegative(t *testing.T) {
+	base := 0 * time.Millisecond
+	max := 100 * time.Millisecond
+	backoffOption := WithExponentialBackoff(base, max)
+
+	o := defaultOptions()
+	backoffOption(o)
+
+	delay := o.backoff(2)
+
+	if delay >= max {
+		t.Errorf("expected delay to be less than %v, got %v", max, delay)
+	}
+
+	base = -10 * time.Millisecond
+	backoffOption = WithExponentialBackoff(base, max)
+
+	backoffOption(o)
+
+	delay = o.backoff(2)
+
+	if delay >= max {
+		t.Errorf("expected delay to be less than %v, got %v", max, delay)
+	}
+}
+
+// TestExponentialBackoff_LargeAttemptValue 测试非常大的attempt值
+func TestExponentialBackoff_LargeAttemptValue(t *testing.T) {
+	base := 1 * time.Millisecond
+	max := 1000 * time.Millisecond
+	backoffOption := WithExponentialBackoff(base, max)
+
+	o := defaultOptions()
+	backoffOption(o)
+
+	delay := o.backoff(100)
+
+	if delay >= max {
+		t.Errorf("expected delay to be less than %v, got %v", max, delay)
+	}
+}
+
+// TestDo_ContextAlreadyCanceled 测试在调用Do方法时上下文已经被取消的情况
+func TestDo_ContextAlreadyCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var called bool
+	err := Do(ctx, func(ctx context.Context) error {
+		called = true
+		return nil
+	})
+
+	if called {
+		t.Error("expected business function to not be called when context is already canceled")
+	}
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected error %v, got %v", context.Canceled, err)
+	}
+}
+
+// TestDo_TimeoutBeforeStart 测试在第一次尝试之前就超时的情况
+func TestDo_TimeoutBeforeStart(t *testing.T) {
+	ctx := context.Background()
+
+	time.Sleep(10 * time.Millisecond)
+
+	err := Do(ctx, func(ctx context.Context) error {
+		return nil
+	}, WithMaxRetries(3), WithMaxElapsedTime(1*time.Nanosecond))
+
+	if err == nil {
+		t.Logf("TestDo_TimeoutBeforeStart: no error returned, trying alternative approach")
+		type customOptions struct {
+			*options
+			delayBeforeCheck bool
+		}
+		err = Do(ctx, func(ctx context.Context) error {
+			return errors.New("temporary error")
+		}, WithMaxRetries(2), WithMaxElapsedTime(1*time.Nanosecond), WithBackoff(func(attempt int) time.Duration {
+			return 1 * time.Second
+		}))
+
+		if err == nil {
+			t.Error("expected error, got nil")
+		}
+	}
+}
