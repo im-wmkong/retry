@@ -9,6 +9,7 @@
 - 可配置最大总耗时
 - 支持固定间隔重试
 - 支持自定义退避策略
+- 支持带随机抖动的指数退避
 - 支持条件重试（基于错误类型）
 - 支持重试前回调（用于监控和日志）
 - 支持自定义日志记录器
@@ -74,6 +75,7 @@ retry包提供了多种配置选项，可以通过函数式选项模式进行配
 | WithMaxElapsedTime | 设置最大允许的总重试耗时 | 0（无限制） |
 | WithInterval | 设置固定重试间隔 | 0（无间隔） |
 | WithBackoff | 设置自定义退避策略（优先级高于Interval） | 始终返回0 |
+| WithExponentialBackoff | 设置带随机抖动的指数退避 | 无 |
 | WithRetryIf | 设置是否对特定错误重试 | 对所有非nil错误重试 |
 | WithOnRetry | 设置每次重试前的回调 | nil |
 | WithLogger | 设置日志实现 | noopLogger（不输出日志） |
@@ -106,12 +108,26 @@ err := retry.Do(ctx, func(ctx context.Context) error {
     // 可能失败的操作
     return someOperation()
 }, retry.WithMaxRetries(5), retry.WithBackoff(func(attempt int) time.Duration {
-    // 指数退避：10ms, 20ms, 40ms, 80ms, 160ms
+    // 指数退避：10ms, 20ms, 30ms, 40ms, 50ms
     return time.Duration(10*attempt) * time.Millisecond
 }))
 ```
 
-### 3. 基于错误类型重试
+### 3. 使用带随机抖动的指数退避策略
+
+```go
+err := retry.Do(ctx, func(ctx context.Context) error {
+    attempt, ok := retry.AttemptFromContext(ctx)
+    if !ok {
+        return errors.New("无法获取重试次数")
+    }
+    fmt.Printf("第 %d 次尝试\n", attempt)
+    // 可能失败的操作
+    return someOperation()
+}, retry.WithMaxRetries(5), retry.WithExponentialBackoff(10 * time.Millisecond, 100 * time.Millisecond)
+```
+
+### 4. 基于错误类型重试
 
 ```go
 var (
@@ -134,7 +150,7 @@ err := retry.Do(ctx, func(ctx context.Context) error {
 }))
 ```
 
-### 4. 使用监控回调
+### 5. 使用监控回调
 
 ```go
 err := retry.Do(ctx, func(ctx context.Context) error {
@@ -145,7 +161,7 @@ err := retry.Do(ctx, func(ctx context.Context) error {
 }))
 ```
 
-### 5. 使用自定义日志记录器
+### 6. 使用自定义日志记录器
 
 ```go
 type CustomLogger struct{}
@@ -179,7 +195,7 @@ err := retry.Do(ctx, func(ctx context.Context) error {
 }, retry.WithMaxRetries(3), retry.WithLogger(&CustomLogger{}))
 ```
 
-### 6. 上下文取消
+### 7. 上下文取消
 
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
