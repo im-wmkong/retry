@@ -262,6 +262,7 @@ type Option func(*options)
 - `WithMaxElapsedTime(d time.Duration)`：设置最大允许的总重试耗时
 - `WithInterval(d time.Duration)`：设置固定重试间隔
 - `WithBackoff(fn func(attempt int) time.Duration)`：设置自定义退避策略
+- `WithExponentialBackoff(base, max time.Duration)`：设置带随机抖动的指数退避
 - `WithRetryIf(fn func(err error) bool)`：设置是否对特定错误重试
 - `WithOnRetry(fn func(attempt int, err error))`：设置每次重试前的回调
 - `WithLogger(l Logger)`：设置日志实现
