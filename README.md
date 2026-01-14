@@ -271,8 +271,10 @@ type Option func(*options)
 
 ```go
 type Logger interface {
-    Info(msg string, fields ...Field)
-    Error(msg string, fields ...Field)
+	Debug(ctx context.Context, msg string, fields ...Field)
+    Info(ctx context.Context, msg string, fields ...Field)
+    Warn(ctx context.Context, msg string, fields ...Field)
+    Error(ctx context.Context, msg string, fields ...Field)
 }
 ```
 
