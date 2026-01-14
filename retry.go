@@ -33,11 +33,11 @@ func Do(
 		// 最大耗时控制
 		elapsed := time.Since(start)
 		if o.maxElapsedTime > 0 && elapsed >= o.maxElapsedTime {
-			o.logger.Error(
-				"retry aborted: max elapsed time exceeded",
-				Field{"attempt", attempt},
-				Field{"elapsed", elapsed},
-			)
+			o.logger.Error(ctx, 
+                "retry aborted: max elapsed time exceeded",
+                Field{"attempt", attempt},
+                Field{"elapsed", elapsed},
+            )
 			if lastErr != nil {
 				return fmt.Errorf("retry timeout (elapsed %v): %w", elapsed, lastErr)
 			}
@@ -54,8 +54,23 @@ func Do(
 		}
 		lastErr = err
 
-		// 判断是否重试：是否达到最大次数 或 满足不重试条件
-		if attempt == o.maxRetries || !o.retryIf(err) {
+		// 是否达到最大次数
+		if attempt == o.maxRetries {
+			o.logger.Warn(attemptCtx, 
+                "retry aborted: max retries reached",
+                Field{"attempt", attempt},
+                Field{"error", err.Error()},
+            )
+			return err
+		}
+
+		// 不满足重试条件
+		if !o.retryIf(err) {
+			o.logger.Debug(attemptCtx, 
+                "retry aborted: error not retryable",
+                Field{"attempt", attempt},
+                Field{"error", err.Error()},
+            )
 			return err
 		}
 
@@ -65,11 +80,11 @@ func Do(
 		}
 
 		// 打印重试日志
-		o.logger.Info(
-			"retrying",
-			Field{"attempt", attempt},
-			Field{"error", err.Error()},
-		)
+		o.logger.Info(attemptCtx, 
+            "retrying",
+            Field{"attempt", attempt},
+            Field{"error", err.Error()},
+        )
 
 		// 等待退避时间
 		sleep := o.backoff(attempt)
