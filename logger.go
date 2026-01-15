@@ -1,7 +1,9 @@
 package retry
 
+import "context"
+
 // Logger 抽象日志接口，避免绑定具体日志库
-// 你可以用 zap / logrus / slog 适配
+// 可以用 zap / logrus / slog 适配
 type Logger interface {
 	Debug(ctx context.Context, msg string, fields ...Field)
     Info(ctx context.Context, msg string, fields ...Field)
