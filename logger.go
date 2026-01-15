@@ -6,9 +6,9 @@ import "context"
 // 可以用 zap / logrus / slog 适配
 type Logger interface {
 	Debug(ctx context.Context, msg string, fields ...Field)
-    Info(ctx context.Context, msg string, fields ...Field)
-    Warn(ctx context.Context, msg string, fields ...Field)
-    Error(ctx context.Context, msg string, fields ...Field)
+	Info(ctx context.Context, msg string, fields ...Field)
+	Warn(ctx context.Context, msg string, fields ...Field)
+	Error(ctx context.Context, msg string, fields ...Field)
 }
 
 // Field 结构化日志字段
