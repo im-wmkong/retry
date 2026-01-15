@@ -7,35 +7,59 @@ import (
 	"time"
 )
 
+// LogCall 表示一次日志调用的信息
+type LogCall struct {
+	msg    string
+	fields []Field
+}
+
 // MockLogger 用于测试的日志记录器
 type MockLogger struct {
-	infoCalls []struct {
-		msg    string
-		fields []Field
-	}
-	errorCalls []struct {
-		msg    string
-		fields []Field
-	}
+	debugCalls []LogCall
+	infoCalls  []LogCall
+	warnCalls  []LogCall
+	errorCalls []LogCall
 }
 
-func (m *MockLogger) Info(msg string, fields ...Field) {
-	m.infoCalls = append(m.infoCalls, struct {
-		msg    string
-		fields []Field
-	}{msg: msg, fields: fields})
+func (m *MockLogger) Debug(ctx context.Context, msg string, fields ...Field) {
+	m.debugCalls = append(m.debugCalls, LogCall{msg: msg, fields: fields})
 }
 
-func (m *MockLogger) Error(msg string, fields ...Field) {
-	m.errorCalls = append(m.errorCalls, struct {
-		msg    string
-		fields []Field
-	}{msg: msg, fields: fields})
+func (m *MockLogger) Info(ctx context.Context, msg string, fields ...Field) {
+	m.infoCalls = append(m.infoCalls, LogCall{msg: msg, fields: fields})
+}
+
+func (m *MockLogger) Warn(ctx context.Context, msg string, fields ...Field) {
+	m.warnCalls = append(m.warnCalls, LogCall{msg: msg, fields: fields})
+}
+
+func (m *MockLogger) Error(ctx context.Context, msg string, fields ...Field) {
+	m.errorCalls = append(m.errorCalls, LogCall{msg: msg, fields: fields})
+}
+
+// 检查是否有指定消息的Debug调用
+func (m *MockLogger) HasDebug(msg string) bool {
+	for _, call := range m.debugCalls {
+		if call.msg == msg {
+			return true
+		}
+	}
+	return false
 }
 
 // 检查是否有指定消息的Info调用
 func (m *MockLogger) HasInfo(msg string) bool {
 	for _, call := range m.infoCalls {
+		if call.msg == msg {
+			return true
+		}
+	}
+	return false
+}
+
+// 检查是否有指定消息的Warn调用
+func (m *MockLogger) HasWarn(msg string) bool {
+	for _, call := range m.warnCalls {
 		if call.msg == msg {
 			return true
 		}
@@ -53,9 +77,19 @@ func (m *MockLogger) HasError(msg string) bool {
 	return false
 }
 
+// 获取Debug调用次数
+func (m *MockLogger) DebugCallCount() int {
+	return len(m.debugCalls)
+}
+
 // 获取Info调用次数
 func (m *MockLogger) InfoCallCount() int {
 	return len(m.infoCalls)
+}
+
+// 获取Warn调用次数
+func (m *MockLogger) WarnCallCount() int {
+	return len(m.warnCalls)
 }
 
 // 获取Error调用次数
