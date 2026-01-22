@@ -14,17 +14,17 @@ var attemptKey = attemptKeyType{}
 func Do(
 	ctx context.Context,
 	fn func(ctx context.Context) error,
-	opts ...Option,
+	options ...Option,
 ) error {
-	o := defaultOptions()
-	for _, opt := range opts {
-		opt(o)
+	opt := defaultOptions()
+	for _, option := range options {
+		option(opt)
 	}
 
 	start := time.Now()
 	var lastErr error
 
-	for attempt := 1; attempt <= o.maxRetries; attempt++ {
+	for attempt := 1; attempt <= opt.maxRetries; attempt++ {
 		// 检查 Context 是否取消
 		if err := ctx.Err(); err != nil {
 			return err
@@ -32,8 +32,8 @@ func Do(
 
 		// 最大耗时控制
 		elapsed := time.Since(start)
-		if o.maxElapsedTime > 0 && elapsed >= o.maxElapsedTime {
-			o.logger.Error(ctx, 
+		if opt.maxElapsedTime > 0 && elapsed >= opt.maxElapsedTime {
+			opt.logger.Error(ctx, 
                 "retry aborted: max elapsed time exceeded",
                 Field{"attempt", attempt},
                 Field{"elapsed", elapsed},
@@ -55,8 +55,8 @@ func Do(
 		lastErr = err
 
 		// 是否达到最大次数
-		if attempt == o.maxRetries {
-			o.logger.Warn(attemptCtx, 
+		if attempt == opt.maxRetries {
+			opt.logger.Warn(attemptCtx, 
                 "retry aborted: max retries reached",
                 Field{"attempt", attempt},
                 Field{"error", err.Error()},
@@ -65,8 +65,8 @@ func Do(
 		}
 
 		// 不满足重试条件
-		if !o.retryIf(err) {
-			o.logger.Debug(attemptCtx, 
+		if !opt.retryIf(err) {
+			opt.logger.Debug(attemptCtx, 
                 "retry aborted: error not retryable",
                 Field{"attempt", attempt},
                 Field{"error", err.Error()},
@@ -75,21 +75,21 @@ func Do(
 		}
 
 		// 执行重试前回调
-		if o.onRetry != nil {
-			o.onRetry(attempt, err)
+		if opt.onRetry != nil {
+			opt.onRetry(attempt, err)
 		}
 
 		// 打印重试日志
-		o.logger.Info(attemptCtx, 
+		opt.logger.Info(attemptCtx, 
             "retrying",
             Field{"attempt", attempt},
             Field{"error", err.Error()},
         )
 
 		// 等待退避时间
-		sleep := o.backoff(attempt)
+		sleep := opt.backoff(attempt)
 		if sleep <= 0 {
-			sleep = o.interval
+			sleep = opt.interval
 		}
 		if sleep > 0 {
 			timer := time.NewTimer(sleep)
